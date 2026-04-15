@@ -51,8 +51,7 @@ func (m ModelConfig) ToMap() map[string]string {
 		fieldType := t.Field(i)
 		fieldValue := v.Field(i)
 
-		// Skip unexported/const fields
-		if !fieldValue.CanSet() {
+		if !fieldType.IsExported() {
 			continue
 		}
 
