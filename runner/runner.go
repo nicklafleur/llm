@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 )
@@ -39,7 +40,12 @@ func LlamaRunArgsFromSection(sec map[string]string, skip map[string]bool) []stri
 func FindBinary(name string) (string, error) {
 	if dir := strings.TrimSpace(os.Getenv("LLAMA_CPP_PATH")); dir != "" {
 		bin := filepath.Join(dir, name)
+		if runtime.GOOS == "windows" {
+			// On Windows, append .exe to the binary name.
+			bin = bin + ".exe"
+		}
 		if _, err := os.Stat(bin); err != nil {
+			
 			return "", fmt.Errorf("LLAMA_CPP_PATH %q does not contain %s: %w", dir, name, err)
 		}
 		return bin, nil

@@ -5,31 +5,33 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 )
 
 // IniPreset represents a parsed .ini model preset configuration
 type IniPreset struct {
-	Path     string                 // absolute path to the .ini file
-	Models   map[string]ModelConfig // model name -> configuration
+	Path   string                 // absolute path to the .ini file
+	Models map[string]ModelConfig // model name -> configuration
 }
 
 // ModelConfig represents a single model's configuration from an .ini section
 type ModelConfig struct {
-	Name          string // section name (model name)
-	HFRepo        string // huggingface repository
-	CtxSize       int    // context size (0 if not set)
-	CacheTypeK    string // cache type for keys
-	CacheTypeV    string // cache type for values
-	FlashAttn     string // flash attention setting
-	NCPUMoe       int    // number of CPU MoE experts (0 if not set)
-	Temp          float64 // temperature (0.0 if not set)
-	MinP          float64 // min-p sampling (0.0 if not set)
-	TopP          float64 // top-p sampling (0.0 if not set)
-	TopK          int    // top-k sampling (0 if not set)
-	Mmap          string // mmap setting
-	Embeddings    bool   // embeddings mode
-	OtherFields   map[string]string // any other fields not explicitly parsed
+	Name        string            `flag:"-"`            // section name (model name)
+	HFRepo      string            `flag:"hf-repo"`      // huggingface repository
+	CtxSize     int               `flag:"ctx-size"`     // context size (0 if not set)
+	CacheTypeK  string            `flag:"cache-type-k"` // cache type for keys
+	CacheTypeV  string            `flag:"cache-type-v"` // cache type for values
+	FlashAttn   string            `flag:"flash-attn"`   // flash attention setting
+	NCPUMoe     int               `flag:"n-cpu-moe"`    // number of CPU MoE experts (0 if not set)
+	Temp        float64           `flag:"temp"`         // temperature (0.0 if not set)
+	MinP        float64           `flag:"min-p"`        // min-p sampling (0.0 if not set)
+	TopP        float64           `flag:"top-p"`        // top-p sampling (0.0 if not set)
+	TopK        int               `flag:"top-k"`        // top-k sampling (0 if not set)
+	Mmap        string            `flag:"mmap"`         // mmap setting
+	Embeddings  bool              `flag:"embeddings"`   // embeddings mode
+	OtherFields map[string]string `flag:"-"`            // any other fields not explicitly parsed
 }
 
 // Get returns a model config by section name.
@@ -41,42 +43,46 @@ func (p *IniPreset) Get(name string) (ModelConfig, bool) {
 // ToMap converts the model config back into key/value pairs expected by runners.
 func (m ModelConfig) ToMap() map[string]string {
 	out := make(map[string]string, len(m.OtherFields)+10)
-	if m.HFRepo != "" {
-		out["hf-repo"] = m.HFRepo
+
+	t := reflect.TypeFor[ModelConfig]()
+	v := reflect.ValueOf(m)
+
+	for i := 0; i < v.NumField(); i++ {
+		fieldType := t.Field(i)
+		fieldValue := v.Field(i)
+
+		// Skip unexported/const fields
+		if !fieldValue.CanSet() {
+			continue
+		}
+
+		// Get the "flag" tag
+		flagTag := fieldType.Tag.Get("flag")
+		if flagTag == "" || flagTag == "-" {
+			continue
+		}
+
+		switch fieldType.Type.Kind() {
+		case reflect.String:
+			if val := fieldValue.String(); val != "" {
+				out[flagTag] = val
+			}
+		case reflect.Int:
+			if val := fieldValue.Int(); val != 0 {
+				out[flagTag] = fmt.Sprintf("%d", val)
+			}
+		case reflect.Float64:
+			if val := fieldValue.Float(); val != 0 {
+				out[flagTag] = fmt.Sprintf("%g", val)
+			}
+		case reflect.Bool:
+			if val := fieldValue.Bool(); val {
+				out[flagTag] = "true"
+			}
+		}
 	}
-	if m.CtxSize != 0 {
-		out["ctx-size"] = fmt.Sprintf("%d", m.CtxSize)
-	}
-	if m.CacheTypeK != "" {
-		out["cache-type-k"] = m.CacheTypeK
-	}
-	if m.CacheTypeV != "" {
-		out["cache-type-v"] = m.CacheTypeV
-	}
-	if m.FlashAttn != "" {
-		out["flash-attn"] = m.FlashAttn
-	}
-	if m.NCPUMoe != 0 {
-		out["n-cpu-moe"] = fmt.Sprintf("%d", m.NCPUMoe)
-	}
-	if m.Temp != 0 {
-		out["temp"] = fmt.Sprintf("%g", m.Temp)
-	}
-	if m.MinP != 0 {
-		out["min-p"] = fmt.Sprintf("%g", m.MinP)
-	}
-	if m.TopP != 0 {
-		out["top-p"] = fmt.Sprintf("%g", m.TopP)
-	}
-	if m.TopK != 0 {
-		out["top-k"] = fmt.Sprintf("%d", m.TopK)
-	}
-	if m.Mmap != "" {
-		out["mmap"] = m.Mmap
-	}
-	if m.Embeddings {
-		out["embeddings"] = "true"
-	}
+
+	// Add any other fields from OtherFields
 	for k, v := range m.OtherFields {
 		out[k] = v
 	}
@@ -141,33 +147,8 @@ func Load(path string) (*IniPreset, error) {
 			key = strings.TrimSpace(key)
 			val = strings.TrimSpace(val)
 
-			// Set specific fields based on key name
-			switch key {
-			case "hf-repo":
-				currentModel.HFRepo = val
-			case "ctx-size":
-				currentModel.CtxSize = parseInt(val)
-			case "cache-type-k":
-				currentModel.CacheTypeK = val
-			case "cache-type-v":
-				currentModel.CacheTypeV = val
-			case "flash-attn":
-				currentModel.FlashAttn = val
-			case "n-cpu-moe":
-				currentModel.NCPUMoe = parseInt(val)
-			case "temp":
-				currentModel.Temp = parseFloat(val)
-			case "min-p":
-				currentModel.MinP = parseFloat(val)
-			case "top-p":
-				currentModel.TopP = parseFloat(val)
-			case "top-k":
-				currentModel.TopK = parseInt(val)
-			case "mmap":
-				currentModel.Mmap = val
-			case "embeddings":
-				currentModel.Embeddings = strings.ToLower(val) == "true"
-			default:
+			// Try to set the field by name
+			if !setField(currentModel, key, val) {
 				currentModel.OtherFields[key] = val
 			}
 		}
@@ -256,16 +237,51 @@ func resolvePath(path string) (string, error) {
 	return "", fmt.Errorf(".ini file not found (use --config, set llm_INI, or run from repo with srv.ini)")
 }
 
-// parseInt safely parses an integer string
-func parseInt(s string) int {
-	var n int
-	_, _ = fmt.Sscanf(s, "%d", &n)
-	return n
-}
+// setField attempts to set a struct field by its name (case-sensitive)
+// Returns false if no matching field is found
+func setField(model *ModelConfig, key, val string) bool {
+	v := reflect.ValueOf(model).Elem()
+	t := v.Type()
 
-// parseFloat safely parses a float string
-func parseFloat(s string) float64 {
-	var n float64
-	_, _ = fmt.Sscanf(s, "%f", &n)
-	return n
+	for i := 0; i < t.NumField(); i++ {
+		fieldType := t.Field(i)
+		flagName := fieldType.Tag.Get("flag")
+		if flagName == "" || flagName == "-" {
+			continue
+		}
+
+		// INI keys map to the struct's `flag` tags, not Go field names.
+		if flagName != key {
+			continue
+		}
+
+		fieldValue := v.Field(i)
+
+		// Set value based on field type
+		switch fieldType.Type.Kind() {
+		case reflect.String:
+			fieldValue.SetString(val)
+		case reflect.Int:
+			i, err := strconv.Atoi(val)
+			if err != nil {
+				return false
+			}
+			fieldValue.SetInt(int64(i))
+		case reflect.Float64:
+			f, err := strconv.ParseFloat(val, 64)
+			if err != nil {
+				return false
+			}
+			fieldValue.SetFloat(f)
+		case reflect.Bool:
+			fieldValue.SetBool(strings.ToLower(val) == "true")
+		default:
+			return false
+		}
+
+		return true
+	}
+
+	// No matching field found
+	return false
 }
